@@ -1,32 +1,12 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
-
-
-#import libraries
 import os
 import datetime
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from PIL import Image
 import torchvision.transforms as T
 import streamlit as st
-
-
-# In[8]:
-
-
-import sys
-import streamlit as st
-
-st.write("Python executable:", sys.executable)
-st.write("Python version:", sys.version)
-
-
-# In[2]:
-
+import torch
 
 # Charset helper
 class Charset:
@@ -41,61 +21,6 @@ class Charset:
         self.char2idx = {c: i+1 for i, c in enumerate(self.chars)}
         self.blank_idx = 0
         self.num_classes = len(self.chars) + 1
-
-
-# In[3]:
-
-
-# CRNN Model
-class SmallCNN(nn.Module):
-    def __init__(self, in_channels=1, out_channels=512):
-        super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_channels, 64, 3, 1, 1),
-            nn.ReLU(True),
-            nn.MaxPool2d((2,2)),
-
-            nn.Conv2d(64, 128, 3, 1, 1),
-            nn.ReLU(True),
-            nn.MaxPool2d((2,2)),
-
-            nn.Conv2d(128, 256, 3, 1, 1),
-            nn.ReLU(True),
-            nn.Conv2d(256, 256, 3, 1, 1),
-            nn.ReLU(True),
-            nn.MaxPool2d((2,1), stride=(2,1)),
-
-            nn.Conv2d(256, 512, 3, 1, 1),
-            nn.ReLU(True),
-            nn.MaxPool2d((2,1), stride=(2,1)),
-        )
-        self.conv1x1 = nn.Conv2d(512, out_channels, 1)
-
-    def forward(self, x):
-        x = self.conv(x)
-        x = self.conv1x1(x)
-        return x
-
-class CRNN(nn.Module):
-    def __init__(self, num_classes, in_channels=1, hidden_size=256, num_layers=2):
-        super().__init__()
-        self.cnn = SmallCNN(in_channels=in_channels, out_channels=512)
-        self.rnn = nn.LSTM(512, hidden_size, num_layers=num_layers, bidirectional=True, batch_first=True)
-        self.fc = nn.Linear(hidden_size*2, num_classes)
-
-    def forward(self, x):
-        conv = self.cnn(x)
-        b, c2, h2, w2 = conv.size()
-        conv = conv.squeeze(2)
-        conv = conv.permute(0, 2, 1)
-        rnn_out, _ = self.rnn(conv)
-        logits = self.fc(rnn_out)
-        logits = logits.permute(1, 0, 2)  # [T,B,C]
-        return logits
-
-
-# In[4]:
-
 
 # Decoder
 def ctc_greedy_decoder(logits, charset, blank_index=0):
@@ -112,22 +37,12 @@ def ctc_greedy_decoder(logits, charset, blank_index=0):
         results.append("".join(out_chars))
     return results
 
-
-# In[5]:
-
-
-# Inference wrapper
+# Inference wrapper using TorchScript
 class InferenceModel:
-    def __init__(self, ckpt_path=None, device=None):
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    def __init__(self, ts_path="best_model_ts.pt", device="cpu"):
+        self.device = device
         self.charset = Charset()
-        self.model = CRNN(num_classes=self.charset.num_classes, in_channels=1).to(self.device)
-        if ckpt_path and os.path.exists(ckpt_path):
-            state = torch.load(ckpt_path, map_location=self.device)
-            if isinstance(state, dict) and "model_state" in state:
-                self.model.load_state_dict(state["model_state"])
-            else:
-                self.model.load_state_dict(state)
+        self.model = torch.jit.load(ts_path, map_location=device)
         self.model.eval()
         self.transform = T.Compose([
             T.Grayscale(num_output_channels=1),
@@ -143,16 +58,11 @@ class InferenceModel:
         pil_img = pil_img.resize((new_w, new_h), Image.BILINEAR)
         tensor = self.transform(pil_img).unsqueeze(0)
         return tensor
-
     def predict(self, pil_img):
         x = self.preprocess(pil_img).to(self.device)
         with torch.no_grad():
             logits = self.model(x)
         return ctc_greedy_decoder(logits.cpu(), self.charset)[0]
-
-
-# In[6]:
-
 
 # Streamlit UI
 st.set_page_config(page_title="Doctor Notes Digitizer", layout="wide")
@@ -160,7 +70,7 @@ st.title("🩺 Handwritten Notes Digitizer")
 
 @st.cache_resource
 def load_model():
-    return InferenceModel(ckpt_path="best_model.pt")
+    return InferenceModel(ts_path="best_model_ts.pt")
 
 infr = load_model()
 
@@ -184,10 +94,3 @@ if uploaded_file:
         st.success("Submitted — thank you!")
 else:
     st.info("Please upload a handwritten note to begin.")
-
-
-# In[ ]:
-
-
-
-
