@@ -1,5 +1,6 @@
 streamlit==1.49.1
 Pillow==11.3.0
+numpy==2.3.3
 torch==2.3.0+cpu
 -f https://download.pytorch.org/whl/cpu/torch_stable.html
-numpy==2.3.3
+
