@@ -1,9 +1,0 @@
-import torch
-from streamlitpoc_model import CRNN, Charset  # your original model classes
-
-charset = Charset()
-model = CRNN(num_classes=charset.num_classes, in_channels=1)
-model.load_state_dict(torch.load("best_model.pt", map_location="cpu"))
-model.eval()
-ts_model = torch.jit.script(model)
-ts_model.save("best_model_ts.pt")
