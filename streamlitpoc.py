@@ -7,6 +7,12 @@ from PIL import Image, ImageOps
 import numpy as np
 import streamlit as st
 import torch
+# load TorchScript model
+import torch
+
+model = torch.jit.load("best_model_ts.pt", map_location="cpu")
+model.eval()
+
 
 # Charset helper
 class Charset:
