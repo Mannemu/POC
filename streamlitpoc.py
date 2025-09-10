@@ -3,8 +3,8 @@
 
 import os
 import datetime
-from PIL import Image
-import torchvision.transforms as T
+from PIL import Image, ImageOps
+import numpy as np
 import streamlit as st
 import torch
 
@@ -37,6 +37,20 @@ def ctc_greedy_decoder(logits, charset, blank_index=0):
         results.append("".join(out_chars))
     return results
 
+# Preprocessing function using Pillow + NumPy
+def preprocess_image(pil_img, img_height=64, max_width=1600):
+    w, h = pil_img.size
+    new_h = img_height
+    new_w = max(1, int(w * (new_h / float(h))))
+    if new_w > max_width:
+        new_w = max_width
+    pil_img = pil_img.resize((new_w, new_h), Image.BILINEAR)
+    pil_img = ImageOps.grayscale(pil_img)
+    tensor = np.array(pil_img, dtype=np.float32) / 255.0
+    tensor = (tensor - 0.5) / 0.5  # normalize
+    tensor = torch.from_numpy(tensor).unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
+    return tensor
+
 # Inference wrapper using TorchScript
 class InferenceModel:
     def __init__(self, ts_path="best_model_ts.pt", device="cpu"):
@@ -44,22 +58,8 @@ class InferenceModel:
         self.charset = Charset()
         self.model = torch.jit.load(ts_path, map_location=device)
         self.model.eval()
-        self.transform = T.Compose([
-            T.Grayscale(num_output_channels=1),
-            T.ToTensor(),
-            T.Normalize((0.5,), (0.5,))
-        ])
-    def preprocess(self, pil_img, img_height=64, max_width=1600):
-        w, h = pil_img.size
-        new_h = img_height
-        new_w = max(1, int(w * (new_h / float(h))))
-        if new_w > max_width:
-            new_w = max_width
-        pil_img = pil_img.resize((new_w, new_h), Image.BILINEAR)
-        tensor = self.transform(pil_img).unsqueeze(0)
-        return tensor
     def predict(self, pil_img):
-        x = self.preprocess(pil_img).to(self.device)
+        x = preprocess_image(pil_img).to(self.device)
         with torch.no_grad():
             logits = self.model(x)
         return ctc_greedy_decoder(logits.cpu(), self.charset)[0]
@@ -81,16 +81,4 @@ if uploaded_file:
     with st.spinner("Transcribing..."):
         pred = infr.predict(pil)
     st.subheader("Transcribed Text")
-    corrected_text = st.text_area("Correct the transcription if needed:", pred, height=200)
-    feedback = st.text_area("Feedback for the developer (optional):", "")
-    if st.button("Submit"):
-        os.makedirs("feedback_data", exist_ok=True)
-        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        fname = f"feedback_data/feedback_{ts}.txt"
-        with open(fname, "w", encoding="utf-8") as f:
-            f.write("Raw Prediction:\n" + pred + "\n\n")
-            f.write("Corrected:\n" + corrected_text + "\n\n")
-            f.write("Feedback:\n" + feedback + "\n")
-        st.success("Submitted — thank you!")
-else:
-    st.info("Please upload a handwritten note to begin.")
+    correc
